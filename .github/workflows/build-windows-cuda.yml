@@ -1,3 +1,4 @@
+```yaml
 name: Build Adaptive-KV Windows CUDA
 
 on:
@@ -23,6 +24,11 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
       - name: Install CUDA Toolkit
         uses: ./source/.github/actions/windows-setup-cuda
         with:
@@ -35,50 +41,47 @@ jobs:
           choco install ninja -y
 
       - name: Check environment
-        shell: pwsh
+        shell: cmd
         run: |
-          Write-Host "=== Windows ==="
-          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion
-
-          Write-Host ""
-          Write-Host "=== CMake ==="
+          echo === CMake ===
           cmake --version
 
-          Write-Host ""
-          Write-Host "=== Ninja ==="
+          echo.
+          echo === Ninja ===
           ninja --version
 
-          Write-Host ""
-          Write-Host "=== NVCC ==="
+          echo.
+          echo === NVCC ===
           nvcc --version
 
-          Write-Host ""
-          Write-Host "=== CUDA_PATH ==="
-          Write-Host $env:CUDA_PATH
+          echo.
+          echo === CUDA_PATH ===
+          echo %CUDA_PATH%
 
-          if (!$env:CUDA_PATH) {
-            throw "CUDA_PATH is not set."
-          }
+          echo.
+          echo === MSVC ===
+          where cl
+          cl
 
-          if (!(Test-Path $env:CUDA_PATH)) {
-            throw "CUDA_PATH does not exist: $env:CUDA_PATH"
-          }
+          echo.
+          echo === Compiler ===
+          where gcc
+          where g++
 
-          Write-Host ""
-          Write-Host "=== Source commit ==="
+          echo.
+          echo === Source commit ===
           git -C source rev-parse HEAD
 
-          Write-Host ""
-          Write-Host "=== Source branch ==="
+          echo.
+          echo === Source branch ===
           git -C source branch --show-current
 
       - name: Build llama-server
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
-
           cmake -S source -B build -G "Ninja Multi-Config" ^
             -DGGML_BACKEND_DL=ON ^
+            -DBUILD_SHARED_LIBS=ON ^
             -DGGML_NATIVE=OFF ^
             -DGGML_CUDA=ON ^
             -DGGML_CUDA_FA_QUANTS=all ^
@@ -164,7 +167,6 @@ jobs:
             "$bin\llama-server.exe" `
             "$package\"
 
-          # ggml.dll / ggml-cuda.dll / other backend DLLs
           Get-ChildItem `
             "$bin\*.dll" `
             -File |
@@ -195,7 +197,6 @@ jobs:
           )
 
           foreach ($pattern in $runtimePatterns) {
-
             $files = Get-ChildItem `
               -Path $cudaBin `
               -Filter $pattern `
@@ -235,7 +236,6 @@ jobs:
           )
 
           foreach ($file in $required) {
-
             $path = Join-Path $package $file
 
             if (!(Test-Path $path)) {
