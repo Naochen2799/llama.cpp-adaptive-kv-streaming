@@ -21,10 +21,10 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup CMake
-        uses: lukka/get-cmake@v4
+        uses: lukka/get-cmake@v4.4.2
 
       - name: Setup CUDA 13.4
-        uses: Jimver/cuda-toolkit@v0.2
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: '13.4.1'
 
