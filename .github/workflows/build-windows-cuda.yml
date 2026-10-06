@@ -12,19 +12,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@latest
+        uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
 
       - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@latest
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup CMake
-        uses: lukka/get-cmake@latest
+        uses: lukka/get-cmake@v4
 
       - name: Setup CUDA 13.4
-        uses: Jimver/cuda-toolkit@latest
+        uses: Jimver/cuda-toolkit@v0.2
         with:
           cuda: '13.4.1'
 
@@ -273,7 +273,7 @@ jobs:
             Select-Object Name, Length
 
       - name: Upload artifact
-        uses: actions/upload-artifact@latest
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: llama-adaptive-kv-windows-cuda
           path: llama-adaptive-kv-windows-cuda.zip
