@@ -1,4 +1,4 @@
-name: Build Windows CUDA
+name: Build Adaptive-KV Windows CUDA
 
 on:
   workflow_dispatch:
@@ -11,36 +11,46 @@ jobs:
     runs-on: windows-2025
 
     steps:
-      - name: Checkout
+      - name: Checkout workflow repository
+        uses: actions/checkout@v7
+
+      - name: Checkout Adaptive-KV source
         uses: actions/checkout@v7
         with:
+          repository: troed/llama.cpp-adaptive-kv-streaming
+          ref: feature/adaptive-kv-stream-v2-sync
+          path: source
           submodules: recursive
           fetch-depth: 0
 
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Setup CMake
-        uses: lukka/get-cmake@v4.4.2
-
-      - name: Setup CUDA 13.4
-        uses: Jimver/cuda-toolkit@v0.2.36
+      - name: Install CUDA Toolkit
+        uses: ./source/.github/actions/windows-setup-cuda
         with:
-          cuda: '13.4.1'
+          cuda_version: '13.4'
+          cuda_arch: 'x64'
+
+      - name: Install Ninja
+        shell: pwsh
+        run: |
+          choco install ninja -y
 
       - name: Check environment
         shell: pwsh
         run: |
+          Write-Host "=== Windows ==="
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion
+
+          Write-Host ""
           Write-Host "=== CMake ==="
           cmake --version
 
           Write-Host ""
-          Write-Host "=== NVCC ==="
-          nvcc --version
+          Write-Host "=== Ninja ==="
+          ninja --version
 
           Write-Host ""
-          Write-Host "=== MSVC ==="
-          cl
+          Write-Host "=== NVCC ==="
+          nvcc --version
 
           Write-Host ""
           Write-Host "=== CUDA_PATH ==="
@@ -54,39 +64,46 @@ jobs:
             throw "CUDA_PATH does not exist: $env:CUDA_PATH"
           }
 
-      - name: Configure
-        shell: pwsh
-        run: |
-          cmake -S . -B build `
-            -DGGML_CUDA=ON `
-            -DGGML_CUDA_FA_QUANTS=all `
-            -DCMAKE_CUDA_ARCHITECTURES=120 `
-            -DCMAKE_BUILD_TYPE=Release
+          Write-Host ""
+          Write-Host "=== Source commit ==="
+          git -C source rev-parse HEAD
 
-      - name: Build
-        shell: pwsh
+          Write-Host ""
+          Write-Host "=== Source branch ==="
+          git -C source branch --show-current
+
+      - name: Build llama-server
+        shell: cmd
         run: |
-          cmake --build build `
-            --config Release `
-            --target llama-server `
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+
+          cmake -S source -B build -G "Ninja Multi-Config" ^
+            -DGGML_BACKEND_DL=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DGGML_CUDA=ON ^
+            -DGGML_CUDA_FA_QUANTS=all ^
+            -DCMAKE_CUDA_ARCHITECTURES=120 ^
+            -DLLAMA_BUILD_BORINGSSL=ON
+
+          cmake --build build ^
+            --config Release ^
+            --target llama-server ^
             --parallel
 
-      - name: Verify binaries
+      - name: Verify llama-server
         shell: pwsh
         run: |
-          $bin = "build\bin\Release"
-
-          $server = Join-Path $bin "llama-server.exe"
+          $server = "build\bin\Release\llama-server.exe"
 
           if (!(Test-Path $server)) {
             throw "llama-server.exe was not generated."
           }
 
-          Write-Host "Found:"
-          Get-ChildItem $bin
+          Write-Host "=== llama-server ==="
+          Get-Item $server
 
           Write-Host ""
-          Write-Host "=== llama-server --version ==="
+          Write-Host "=== Version ==="
           & $server --version
 
       - name: Verify Adaptive-KV and MTP
@@ -95,7 +112,8 @@ jobs:
           $server = "build\bin\Release\llama-server.exe"
           $help = "help.txt"
 
-          & $server --help 2>&1 | Out-File $help -Encoding utf8
+          & $server --help 2>&1 |
+            Out-File $help -Encoding utf8
 
           $required = @(
             "--kv-stream-arena-mib",
@@ -105,8 +123,12 @@ jobs:
           )
 
           foreach ($item in $required) {
-            if (!(Select-String -Path $help -Pattern ([regex]::Escape($item)) -Quiet)) {
-              throw "Missing required parameter: $item"
+            if (!(Select-String `
+                -Path $help `
+                -Pattern ([regex]::Escape($item)) `
+                -Quiet)) {
+
+              throw "Missing parameter: $item"
             }
 
             Write-Host "Verified: $item"
@@ -115,7 +137,42 @@ jobs:
           Write-Host ""
           Write-Host "Adaptive-KV / MTP parameters verified."
 
-      - name: Collect CUDA runtime DLLs
+      - name: Prepare package
+        shell: pwsh
+        run: |
+          $package = "llama-adaptive-kv-windows-cuda"
+
+          Remove-Item `
+            $package `
+            -Recurse `
+            -Force `
+            -ErrorAction SilentlyContinue
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $package |
+            Out-Null
+
+      - name: Copy binaries
+        shell: pwsh
+        run: |
+          $package = "llama-adaptive-kv-windows-cuda"
+          $bin = "build\bin\Release"
+
+          Copy-Item `
+            "$bin\llama-server.exe" `
+            "$package\"
+
+          # ggml.dll / ggml-cuda.dll / other backend DLLs
+          Get-ChildItem `
+            "$bin\*.dll" `
+            -File |
+            Copy-Item `
+              -Destination $package `
+              -Force
+
+      - name: Copy CUDA runtime
         shell: pwsh
         run: |
           $package = "llama-adaptive-kv-windows-cuda"
@@ -125,7 +182,8 @@ jobs:
             throw "CUDA bin directory not found: $cudaBin"
           }
 
-          Write-Host "CUDA bin: $cudaBin"
+          Write-Host "CUDA bin:"
+          Write-Host $cudaBin
 
           $runtimePatterns = @(
             "cudart64_*.dll",
@@ -137,6 +195,7 @@ jobs:
           )
 
           foreach ($pattern in $runtimePatterns) {
+
             $files = Get-ChildItem `
               -Path $cudaBin `
               -Filter $pattern `
@@ -144,80 +203,25 @@ jobs:
               -ErrorAction SilentlyContinue
 
             foreach ($file in $files) {
-              Write-Host "Copy CUDA runtime: $($file.Name)"
+              Write-Host "Copy: $($file.Name)"
+
               Copy-Item `
-                -Path $file.FullName `
-                -Destination $package `
+                $file.FullName `
+                $package `
                 -Force
             }
           }
 
-      - name: Package
+      - name: Copy documentation
         shell: pwsh
         run: |
           $package = "llama-adaptive-kv-windows-cuda"
-          $bin = "build\bin\Release"
 
-          Remove-Item $package -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $package | Out-Null
-
-          # llama-server
-          Copy-Item `
-            "$bin\llama-server.exe" `
-            "$package\"
-
-          # llama-cli, if generated
-          if (Test-Path "$bin\llama-cli.exe") {
+          if (Test-Path "source\README.md") {
             Copy-Item `
-              "$bin\llama-cli.exe" `
+              "source\README.md" `
               "$package\"
           }
-
-          # All DLLs generated by the fork
-          Get-ChildItem `
-            "$bin\*.dll" `
-            -File |
-            Copy-Item `
-              -Destination $package `
-              -Force
-
-          # CUDA runtime DLLs
-          $cudaBin = Join-Path $env:CUDA_PATH "bin"
-
-          $runtimePatterns = @(
-            "cudart64_*.dll",
-            "cublas64_*.dll",
-            "cublasLt64_*.dll",
-            "nvrtc64_*.dll",
-            "nvrtc-builtins64_*.dll",
-            "nvJitLink_*.dll"
-          )
-
-          foreach ($pattern in $runtimePatterns) {
-            Get-ChildItem `
-              -Path $cudaBin `
-              -Filter $pattern `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Copy-Item `
-                -Destination $package `
-                -Force
-          }
-
-          # README
-          if (Test-Path README.md) {
-            Copy-Item README.md "$package\"
-          }
-
-          Write-Host ""
-          Write-Host "=== Package contents ==="
-
-          Get-ChildItem $package |
-            Sort-Object Name |
-            Select-Object Name, Length
 
       - name: Verify package
         shell: pwsh
@@ -231,28 +235,39 @@ jobs:
           )
 
           foreach ($file in $required) {
+
             $path = Join-Path $package $file
 
             if (!(Test-Path $path)) {
-              throw "Required package file missing: $file"
+              throw "Required file missing: $file"
             }
 
             Write-Host "Verified: $file"
           }
 
-          $cudaDlls = Get-ChildItem `
-            "$package\*.dll" |
+          Write-Host ""
+          Write-Host "=== CUDA runtime DLLs ==="
+
+          $cudaDlls = Get-ChildItem "$package\*.dll" |
             Where-Object {
-              $_.Name -match "^(cudart|cublas|cublasLt|nvrtc|nvrtc-builtins|nvJitLink)"
+              $_.Name -match `
+                "^(cudart|cublas|cublasLt|nvrtc|nvrtc-builtins|nvJitLink)"
             }
 
           if ($cudaDlls.Count -eq 0) {
-            throw "No CUDA runtime DLLs were packaged."
+            throw "No CUDA runtime DLLs found."
           }
 
+          $cudaDlls |
+            Sort-Object Name |
+            Select-Object Name
+
           Write-Host ""
-          Write-Host "CUDA runtime DLLs:"
-          $cudaDlls | Select-Object Name
+          Write-Host "=== Complete package ==="
+
+          Get-ChildItem $package |
+            Sort-Object Name |
+            Select-Object Name, Length
 
       - name: Create ZIP
         shell: pwsh
@@ -260,7 +275,10 @@ jobs:
           $package = "llama-adaptive-kv-windows-cuda"
           $zip = "$package.zip"
 
-          Remove-Item $zip -Force -ErrorAction SilentlyContinue
+          Remove-Item `
+            $zip `
+            -Force `
+            -ErrorAction SilentlyContinue
 
           Compress-Archive `
             -Path "$package\*" `
@@ -268,12 +286,13 @@ jobs:
             -Force
 
           Write-Host ""
-          Write-Host "Created:"
+          Write-Host "Created package:"
+
           Get-Item $zip |
             Select-Object Name, Length
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: llama-adaptive-kv-windows-cuda
           path: llama-adaptive-kv-windows-cuda.zip
