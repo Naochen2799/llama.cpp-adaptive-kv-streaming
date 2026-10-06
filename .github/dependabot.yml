@@ -1,0 +1,14 @@
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+    allow:
+      - dependency-name: "actions/checkout"
+      - dependency-name: "actions/upload-artifact"
+      - dependency-name: "ilammy/msvc-dev-cmd"
+      - dependency-name: "lukka/get-cmake"
+      - dependency-name: "Jimver/cuda-toolkit"
